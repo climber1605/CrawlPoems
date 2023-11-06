@@ -11,9 +11,9 @@ import markdownify
 import time
 import sys
 import os
-import utils
+from utils import *
 
-sys.stdout = utils.Logger('crawl.log')
+sys.stdout = Logger('crawl.log')
 
 url = 'http://www.shangshiwen.com'
 WAIT_SECONDS = 15
@@ -44,6 +44,8 @@ def get_browser(type_browser, headless=False, use_proxy=False):
         options.add_argument('--disable-gpu')
         options.add_argument('--disable-infobars')
         options.add_argument('--disable-extentions')
+        options.add_argument('--ignore-certificate-errors-spki-list')
+        options.add_argument('--ignore-ssl-errors')
         browser = webdriver.Chrome(options=options, executable_path=path_chrome_driver)
         
     return browser
@@ -70,56 +72,79 @@ def start_crawl(output_file):
 
     # 切换到最新打开的窗口
     browser.switch_to.window(browser.window_handles[-1])
-    time.sleep(3)
+    time.sleep(1)
 
-    current_window = browser.current_window_handle
+    poems_per_page = 0
+    succeed = failed = 0
+    has_next_page = True
 
-    for i in range(1):
-        try:
-            elem = WebDriverWait(browser, WAIT_SECONDS).until(
-                EC.element_to_be_clickable(
-                    (By.XPATH, '//*[@id="middlediv"]/div[1]/ul/li[{}]/a[1]'.format(i + 1))
+    while has_next_page:
+        current_window = browser.current_window_handle
+        for i in range(poems_per_page):
+            try:
+                elem = WebDriverWait(browser, WAIT_SECONDS).until(
+                    EC.element_to_be_clickable(
+                        (By.XPATH, '//*[@id="middlediv"]/div[1]/ul/li[{}]/a[1]'.format(i + 1)) 
+                    )
                 )
-            )
-        except TimeoutException as e:
-            print('Timeout during waiting for poem {}.'.format(i + 1))
-            browser.quit()
-            return False
-        elem.click()
-        time.sleep(1)
+            except TimeoutException as e:
+                print('Timeout during waiting for poem {}.'.format(i + 1))
+                failed += 1
+                continue
+            elem.click()
+            time.sleep(1)
 
-        # 切换到最新打开的窗口
-        browser.switch_to.window(browser.window_handles[-1])
-        time.sleep(3)
+            # 切换到最新打开的窗口
+            browser.switch_to.window(browser.window_handles[-1])
+            time.sleep(3)
 
-        try:
-            elem = WebDriverWait(browser, WAIT_SECONDS).until(
-                EC.visibility_of_element_located(
-                    (By.XPATH, '//*[@id="rightwo"]')  
+            try:
+                elem = WebDriverWait(browser, WAIT_SECONDS).until(
+                    EC.visibility_of_element_located(
+                        (By.XPATH, '//*[@id="rightwo"]')  
+                    )
                 )
-            )
-        except TimeoutException as e:
-            print('Timeout during waiting for poem {}.'.format(i + 1))
-            browser.quit()
-            return False
-        
-        to_del = elem.find_elements_by_xpath("./div/div[2]/div")
-        while  len(to_del):
-            browser.execute_script("arguments[0].remove()",to_del[0])
-            article = browser.find_element_by_xpath('//*[@id="rightwo"]')
-            to_del = elem.find_elements_by_xpath("./div/div[2]/div")
+            except TimeoutException as e:
+                print('Timeout during waiting for poem {}.'.format(i + 1))
+                continue
+                
+            html = elem.get_attribute("outerHTML")
+            #print(html)
+            md = markdownify.markdownify(html, heading_style='ATX')
+            md = remove_noise(md)
+            #print(md)
+
+            with open(output_file, 'a', encoding='utf-8') as f:
+                f.write(md)
+                f.write('\n')
             
-        html = elem.get_attribute("outerHTML")
-        print(html)
-        md = markdownify.markdownify(html, heading_style='ATX')
-        print(md)
+            succeed += 1
+            browser.close()
+            browser.switch_to.window(current_window)
+            time.sleep(1)
 
-        with open(output_file, 'a', encoding='utf-8') as f:
-            f.write(md)
-            f.write('\n')
+        if True or i + 1 == poems_per_page:
+            try:
+                elem = WebDriverWait(browser, WAIT_SECONDS).until(
+                    EC.element_to_be_clickable(
+                        (By.XPATH, '//*[@id="middlediv"]/div[2]/div/a[5]')
+                    )
+                )
+            except TimeoutException as e:
+                print('Timeout during waiting for next page')
+                has_next_page = False
+                continue    
+            print('before0 Succceed: {}, Failed: {}'.format(succeed, failed))   
+            #browser.execute_script("arguments[0].click();", elem)
+            browser.execute_script("arguments[0].scrollIntoView(true);",elem)
+            browser.execute_script("window.scrollBy(0,-200);")
+            elem.click()  
+            browser.switch_to.default_content()
+            time.sleep(1)
 
-        browser.close()
-        browser.switch_to.window(current_window)
+            print('before1 Succceed: {}, Failed: {}'.format(succeed, failed))   
+       
+        print('after Succceed: {}, Failed: {}'.format(succeed, failed))   
 
     return True
 
