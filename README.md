@@ -1,5 +1,5 @@
 # CrawlPoems
-## 基于python3 selenium的古诗词爬虫，支持进度管理，自动重试，断点续爬，结果校验，结果合并
+基于python3 selenium的古诗词爬虫，支持进度管理，自动重试，断点续爬，结果校验，结果合并。
 ## 安装
 pip install -r requirements.txt
 ## 用法
