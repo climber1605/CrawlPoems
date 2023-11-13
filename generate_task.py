@@ -1,6 +1,7 @@
 import sys
 import re
 import pandas as pd
+import time
 from collections import OrderedDict
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -11,7 +12,8 @@ from constants import *
 sys.stdout = Logger(os.path.join(os.getcwd(), LOG_DIR, 'generate_task.log'))
 
 def generate_task():
-    print('Start generating task.')
+    start_time = time.localtime()
+    print('Start generating task at {}'.format(time.strftime('%Y-%m-%d %H:%M:%S', start_time)))
 
     driver = get_driver(TYPE_BROWSER, HEADLESS)
     driver.get(URL)
@@ -37,15 +39,17 @@ def generate_task():
 
         task['诗词总数'] = total
         task['已爬诗词'] = 0
+        task['未爬诗词'] = total
         tasks.append(task)
-        print('Generated task for catageory {}'.format(task['诗词标签']))
+        print('Generate task for catageory {}'.format(task['诗词标签']))
 
         driver.close()
         driver.switch_to.window(current_window)
     
     driver.close()
     pd.DataFrame(data=tasks).to_excel(TASK_FILE)
-    print('Finish generating task.')
+    end_time = time.localtime()
+    print('Finish generating task at {}, total used time: {}s'.format(time.strftime('%Y-%m-%d %H:%M:%S', end_time), time.mktime(end_time) - time.mktime(start_time)))
 
 if __name__ == '__main__':
     generate_task()

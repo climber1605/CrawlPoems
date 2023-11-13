@@ -3,7 +3,7 @@ import os
 import sys
 import time
 import markdownify
-from collections import defaultdict
+from collections import Counter
 from retrying import retry
 from selenium import webdriver
 from selenium.webdriver import ActionChains
@@ -18,13 +18,14 @@ from constants import *
 
 sys.stdout = Logger(os.path.join(os.getcwd(), LOG_DIR, 'crawl.log'))
 
-#@retry(stop_max_attempt_number=3)
+@retry(stop_max_attempt_number=3, wait_exponential_multiplier=1000, wait_exponential_max=10000)
 def start_crawl(url):
     start_time = time.localtime()
     print('Start crawling {} at {}'.format(url, time.strftime('%Y-%m-%d %H:%M:%S', start_time)))
 
     succeed = failed = skipped = 0
-    crawled = get_crawled_output()
+    crawled = get_crawled_poems_by_catageory()
+    expected = get_expected_poems_by_catageory()
     
     driver = get_driver(TYPE_BROWSER, HEADLESS)
     driver.get(url)
@@ -44,7 +45,6 @@ def start_crawl(url):
     links = elem.find_elements(By.TAG_NAME, 'a')
     
     current_window = driver.current_window_handle
-    cnt = defaultdict(int)
 
     def crawl_catageory(catageory: str) -> None:
         nonlocal succeed, failed, skipped
@@ -84,6 +84,10 @@ def start_crawl(url):
                 poem = '_'.join([title, author, dynasty])
                 poem = re.sub(r'[\\\/\:\*\?\"\<\>\|\ue423]', '', poem)
 
+                with open('poems.txt', 'a', encoding='utf-8') as f:
+                    f.write(poem)
+                    f.write('\n')
+
                 # 当同一分类标签中的诗词出现重复时，文件名额外添加后缀（?）
                 cnt[poem] += 1
                 if cnt[poem] > 1:
@@ -109,6 +113,7 @@ def start_crawl(url):
                     )
                 except TimeoutException as e:
                     print('Timeout during waiting for info of poem #{} in page {} in catageory {}, poem: {}'.format(i + 1, page, catageory, poem))
+                    failed += 1
                     continue
                 
                 # 提取诗词信息并转换为markdown格式
@@ -123,59 +128,72 @@ def start_crawl(url):
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(md)
             
-                print('Current succeed: {}, current failed: {}, current skipped: {}'.format(succeed, failed, skipped))          
                 print('Successfully crawled poem #{} in page {} in catageory {}, poem: {}'.format(i + 1, page, catageory, poem))
                 succeed += 1
                 driver.close()
                 driver.switch_to.window(current_window)
 
+            print('Current succeed: {}, current failed: {}, current skipped: {}'.format(succeed, failed, skipped))          
             end_time = time.localtime()
             print('Finish crawling page {} at {}, total used time: {}s'.format(page, time.strftime('%Y-%m-%d %H:%M:%S', end_time), time.mktime(end_time) - time.mktime(start_time)))
 
-        has_next_page = True
-        while has_next_page:
-            # 找到当前页码
-            elem = WebDriverWait(driver, WAIT_SECONDS).until(EC.visibility_of_element_located((By.XPATH, '//*[@id="middlediv"]/div[2]/div')))
-            span = elem.find_element(By.CLASS_NAME, 'cur')
-            page = int(span.text)
-        
+        while True:
+            # 定位到当前页码，注意当只有一页的时候不存在当前页码，必然定位失败
+            try:
+                elem = WebDriverWait(driver, WAIT_SECONDS).until(
+                    EC.visibility_of_element_located(
+                        (By.XPATH, '//*[@id="middlediv"]/div[2]/div')
+                    )
+                )
+                span = elem.find_element(By.CLASS_NAME, 'cur')
+                page = int(span.text)
+            except TimeoutException as e:
+                print('Timeout during waiting for current page span')
+                page = 1
+
             crawl_page(catageory, page)
 
             # 尝试点击下一页
             try:
-                WebDriverWait(driver, WAIT_SECONDS).until(EC.element_to_be_clickable((By.XPATH, '//*[contains(text(), "下一页")]'))).click()
+                next_page_link = WebDriverWait(driver, WAIT_SECONDS).until(EC.element_to_be_clickable((By.XPATH, '//*[contains(text(), "下一页")]')))
             except TimeoutException as e:
-                print('Timeout during waiting for next page on page {}.'.format(page))
-                has_next_page = False         
+                print('Timeout during waiting for next page link on page {}.'.format(page))
+                break 
+
+            # 将鼠标拖动到下一页按键附近并点击
+            driver.execute_script("arguments[0].scrollIntoView();", next_page_link) 
+            ActionChains(driver).move_to_element(next_page_link).click().perform()    
+
+            # 通过当前页码元素是否过期判断页面是否刷新
+            try:
+                WebDriverWait(driver, WAIT_SECONDS).until(EC.staleness_of(span))  
+            except TimeoutException as e:
+                print('Timeout during waiting for refresh of current page after clicking next page in page {} in catageory {}.'.format(page, catageory))   
 
         end_time = time.localtime()
         print('Finish crawling catageory {} at {}, total used time: {}s'.format(catageory, time.strftime('%Y-%m-%d %H:%M:%S', end_time), time.mktime(end_time) - time.mktime(start_time)))
         
     for link in links:
-        # 点击每个分类标签并切换至新打开的窗口
+        # 判断当前分类标签的诗词是否已经爬取完成
         catageory = link.text
-        link.click()
-        driver.switch_to.window(driver.window_handles[-1])
 
-        # 提取该分类标签的诗词总数
-        elem = WebDriverWait(driver, WAIT_SECONDS).until(
-            EC.visibility_of_element_located(
-                (By.XPATH, '//*[@id="shuaixuan"]')
-            )
-        )
-        matchObj = re.match('.*\((.*)首\)', elem.text)
-        total = int(matchObj.group(1))
+        # if catageory != '写景诗':
+        #     continue
 
-        if total <= len(crawled[catageory]):
+        if expected[catageory] <= len(crawled[catageory]):
             print("Skip catageory {} since crawl has completed".format(catageory))
-            skipped += total
+            skipped += expected[catageory]
         else:
-            print('Found {} poems in catageory {} while only {} of them have been crawled'.format(total, catageory, len(crawled[catageory])))
-            if catageory != '描写黄河':
-                crawl_catageory(catageory)
+            print('Found {} poems in catageory {} while only {} of them have been crawled'.format(expected[catageory], catageory, len(crawled[catageory])))
+            # 点击每个分类标签并切换至新打开的窗口
+            link.click()
+            driver.switch_to.window(driver.window_handles[-1])
+         
+            cnt = Counter()
+            crawl_catageory(catageory)
 
-        driver.close()
-        driver.switch_to.window(current_window)
+            driver.close()
+            driver.switch_to.window(current_window)
 
     driver.close()
     end_time = time.localtime()

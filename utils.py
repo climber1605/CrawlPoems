@@ -2,6 +2,7 @@
 import os
 import sys
 import re
+import pandas as pd
 from collections import defaultdict
 from selenium import webdriver
 from constants import *
@@ -46,7 +47,7 @@ def get_driver(type_browser='chrome', headless=False):
     return driver
 
 # 获取爬取进度--每个分类标签已爬取的诗词
-def get_crawled_output():
+def get_crawled_poems_by_catageory():
     crawled = defaultdict(set)
     output_dirpath = os.path.join(os.getcwd(), OUTPUT_DIR)
     for (dirpath, dirnames, filenames) in os.walk(output_dirpath):
@@ -55,6 +56,11 @@ def get_crawled_output():
             if filename.endswith('.md'): 
                 crawled[foldername].add(filename[:-3])
     return crawled
+
+def get_expected_poems_by_catageory():
+    expected = defaultdict(int)
+    df = pd.read_excel(TASK_FILE, usecols='B, C', index_col=0)
+    return df.to_dict()['诗词总数']
 
 # 清除markdown文件中的noise
 def remove_noise(s):

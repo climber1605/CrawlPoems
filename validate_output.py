@@ -6,9 +6,11 @@ sys.stdout = Logger(os.path.join(os.getcwd(), LOG_DIR, 'validate_output.log'))
 
 def validate(filepath):
     required_items = ['原文', '参考翻译', '参考赏析']
+    #required_items = ['原文', '参考翻译']
+    #required_items = ['原文', '参考赏析']
 
     with open(filepath, 'r', encoding='utf-8') as f:
-        content = f.readlines()
+        content = f.read()
         for item in required_items:
             if item not in content:
                 print('Validation failed for file {} due to missing {}'.format(filepath, item))
